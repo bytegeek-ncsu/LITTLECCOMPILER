@@ -1,0 +1,1 @@
+add_library(${LIBRARY_NAME_1} STATIC vector.c buffer.c)
