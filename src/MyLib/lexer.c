@@ -40,6 +40,13 @@ static void pushc(char c)
     lex_process->function->push_char(lex_process, c);
 }
 
+static char assert_next_char(char c)
+{
+    char next_c = nextc();
+    assert(c == next_c);
+    return next_c;
+}
+
 static struct pos lex_file_position()
 {
     return lex_process->pos;
@@ -389,10 +396,123 @@ struct token* token_make_newline()
     return token_create(&(struct token){.type=TOKEN_TYPE_NEWLINE});
 }
 
+///////////////////////////////////////////////////
+//Comments token
+///////////////////////////////////////////////////
+struct token* token_make_one_line_comment()
+{
+    struct buffer* buffer = buffer_create();
+    char c = 0;
+    LEX_GETC_IF(buffer, c, c != '\n' && c != EOF);
+    return token_create(&(struct token){.type=TOKEN_TYPE_COMMENT,.sval=buffer_ptr(buffer)});
+}
+
+struct token* token_make_multiline_comment()
+{
+    struct buffer* buffer = buffer_create();
+    char c = 0;
+    while(1)
+    {
+        LEX_GETC_IF(buffer, c, c != '*' && c != EOF);
+        if (c == EOF)
+        {
+            compiler_error(lex_process->compiler, "You did not close this multiline comment\n");
+        }
+        else if(c == '*')
+        {
+            // Skip the *
+            nextc();
+
+            if (peekc() == '/')
+            {
+                nextc();
+                break;
+            }
+        }
+    }
+    return token_create(&(struct token){.type=TOKEN_TYPE_COMMENT, .sval=buffer_ptr(buffer)});
+}
+
+struct token* handle_comment()
+{
+    char c = peekc();
+    if (c == '/')
+    {
+        nextc();
+        if (peekc() == '/')
+        {
+            nextc();
+            return token_make_one_line_comment();
+        }
+        else if(peekc() == '*')
+        {
+            nextc();
+            return token_make_multiline_comment();
+        }
+
+        pushc('/');
+        return token_make_operator_or_string();
+    }
+
+    return NULL;
+}
+
+//////////////////////////////////////////////////////
+//Token For quotes
+//////////////////////////////////////////////////////
+char lex_get_escaped_char(char c)
+{
+    char co = 0;
+    switch(c)
+    {
+        case 'n':
+        co = '\n';
+        break;
+        case '\\':
+        co = '\\';
+        break;
+
+        case 't':
+        co = '\t';
+        break;
+
+        case '\'':
+        co = '\'';
+        break;
+    }
+    return co;
+}
+
+struct token* token_make_quote()
+{
+    assert_next_char('\'');
+    char c = nextc();
+    if (c == '\\')
+    {
+        c = nextc();
+        c = lex_get_escaped_char(c);
+    }
+
+    if (nextc() != '\'')
+    {
+        compiler_error(lex_process->compiler, "You opened a quote ' but did not close it with a ' character");
+    }
+
+    return token_create(&(struct token){.type=TOKEN_TYPE_NUMBER, .cval=c});
+}
+
+
 struct token *read_next_token()
 {
     struct token *token = NULL;
     char c = peekc();
+
+    token = handle_comment();
+    if (token)
+    {
+        return token;
+    }
+
     switch (c)
     {
     NUMERIC_CASE:
@@ -409,6 +529,10 @@ struct token *read_next_token()
 
     case '"':
         token = token_make_string('"', '"');
+        break;
+
+    case '\'':
+        token = token_make_quote();
         break;
 
     // We don't care about whitespace ignore them
